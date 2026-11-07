@@ -1,0 +1,29 @@
+{
+  "realm": "saathi",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 3600,
+  "ssoSessionIdleTimeout": 3600,
+  "roles": {"realm": [{"name": "owner"}, {"name": "partner"}]},
+  "clients": [{
+    "clientId": "saathi-web",
+    "publicClient": true,
+    "standardFlowEnabled": true,
+    "directAccessGrantsEnabled": false,
+    "redirectUris": ["http://127.0.0.1:8174/api/auth/callback"],
+    "attributes": {"pkce.code.challenge.method": "S256"},
+    "protocolMappers": [{
+      "name": "saathi-api",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-audience-mapper",
+      "config": {"included.custom.audience": "saathi-api", "access.token.claim": "true", "id.token.claim": "false"}
+    }]
+  }],
+  "users": [
+    {"id":"5b58ddbb-2b6c-4162-b386-50d909c349c0","username":"owner-demo","enabled":true,"emailVerified":true,"firstName":"Demo","lastName":"Owner","email":"owner@saathi.invalid","realmRoles":["owner"],"credentials":[{"type":"password","value":"saathi-owner-demo","temporary":false}]},
+    {"id":"4e7f85ab-28e3-400b-97ef-f800bf961f04","username":"owner-qa","enabled":true,"emailVerified":true,"firstName":"QA","lastName":"Owner","email":"qa@saathi.invalid","realmRoles":["owner"],"credentials":[{"type":"password","value":"saathi-owner-qa","temporary":false}]},
+    {"id":"3c3a048a-d7b0-4c92-ac86-5456dc5cf9bc","username":"owner-try","enabled":true,"emailVerified":true,"firstName":"Sample","lastName":"Owner","email":"try@saathi.invalid","realmRoles":["owner"],"credentials":[{"type":"password","value":"saathi-owner-try","temporary":false}]},
+    {"id":"36eee854-8024-44fe-a7a0-b7cb84959525","username":"partner-demo","enabled":true,"emailVerified":true,"firstName":"Demo","lastName":"Partner","email":"partner@saathi.invalid","realmRoles":["partner"],"credentials":[{"type":"password","value":"saathi-partner-demo","temporary":false}]}
+  ]
+}

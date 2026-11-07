@@ -1,0 +1,73 @@
+name: udyam-saathi
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: saathi
+      POSTGRES_USER: saathi
+      POSTGRES_PASSWORD: local-synthetic-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saathi -d saathi"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://saathi:local-synthetic-only@db:5432/saathi
+      SAATHI_DATA_DIR: /case-data
+      OIDC_ISSUER: http://127.0.0.1:8175/realms/saathi
+      OIDC_INTERNAL: http://identity:8080/realms/saathi
+      OCR_URL: http://ocr:8010/extract
+      SAATHI_S3_URL: http://objects:8333
+      SAATHI_S3_USER: saathi-local
+      SAATHI_S3_PASSWORD: saathi-local-objects
+      SAATHI_MODEL_URL: http://model:11434
+      SAATHI_MODEL: qwen2.5:1.5b
+    volumes:
+      - type: bind
+        source: ${SAATHI_DATA_PATH:-../6ae1873397bc1_digital/YTL_TrackA_Udyam_Digital_Data}
+        target: /case-data
+        read_only: true
+    ports:
+      - "127.0.0.1:8174:8000"
+  identity:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm", "--hostname", "http://127.0.0.1:8175"]
+    volumes:
+      - ./infra/saathi-realm.json:/opt/keycloak/data/import/saathi-realm.json:ro
+      - identitydata:/opt/keycloak/data
+    ports:
+      - "127.0.0.1:8175:8080"
+  objects:
+    image: chrislusf/seaweedfs:latest
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json", "-ip.bind=0.0.0.0", "-master.volumeSizeLimitMB=128"]
+    environment:
+      WEED_LEVELDB2_ENABLED: "true"
+    volumes:
+      - objectdata:/data
+      - ./infra/s3.json:/etc/seaweedfs/s3.json:ro
+  ocr:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.ocr
+    environment:
+      PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"
+      PADDLE_PDX_MODEL_SOURCE: BOS
+    volumes:
+      - ocrmodels:/root/.paddlex
+  model:
+    image: ollama/ollama:latest
+    volumes:
+      - models:/root/.ollama
+volumes:
+  pgdata:
+  identitydata:
+  objectdata:
+  ocrmodels:
+  models:
