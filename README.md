@@ -6,7 +6,8 @@
 
 **Team Signal** · Vellore Institute of Technology (VIT), Vellore · Airtel SYNC 2026
 
-[GitHub repository](https://github.com/Mayank2142/Udyam-Saathi) · [Google Drive folder](https://drive.google.com/drive/folders/1AVy5wnl0_tzbrYDYD2lAIVDtpfhK05Bt?usp=sharing) · [Watch demo video](https://drive.google.com/file/d/1yq4jV2GfuB5-S13wmKYB77IQQey7bySl/view?usp=sharing)
+· [Google Drive folder](https://drive.google.com/drive/folders/1AVy5wnl0_tzbrYDYD2lAIVDtpfhK05Bt?usp=sharing) 
+· [Watch demo video](https://drive.google.com/file/d/1yq4jV2GfuB5-S13wmKYB77IQQey7bySl/view?usp=sharing)
 
 [Product tour](#product-tour) · [Run locally](#run-locally) · [Architecture](#architecture) · [Testing](#testing-and-evidence)
 
