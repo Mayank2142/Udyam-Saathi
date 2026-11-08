@@ -2,7 +2,9 @@
 import argparse
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
+from threading import Barrier
 
 import httpx
 
@@ -48,6 +50,7 @@ def main():
     cli.add_argument("--base", default="http://127.0.0.1:8174")
     cli.add_argument("--skip-model", action="store_true")
     cli.add_argument("--quote-only", action="store_true")
+    cli.add_argument("--require-fresh", action="store_true", help="Fail if the QA account already has a case")
     args = cli.parse_args()
     outcomes = {}
     with demo_client(args.base, 180) as owner, demo_client(args.base, 30) as partner:
@@ -58,6 +61,9 @@ def main():
         assert role["role"] == "owner", role
         outcomes["oidc_owner"] = True
         case = owner.get("/api/case").raise_for_status().json()
+        if args.require_fresh:
+            assert case is None, "Use a separate Compose project with a fresh PostgreSQL volume"
+            outcomes["fresh_owner"] = True
         needs = {
             "segment": "office", "employees": 5, "sites": 1, "city_tier": 2, "speed": 300,
             "email_seats": 5, "devices": 5, "monthly_budget": 3500, "coverage": "fibre",
@@ -65,6 +71,12 @@ def main():
         if not case or not case.get("accepted_at"):
             case = owner.put("/api/case", json={"revision": case["revision"] if case else 0, "needs": needs}).raise_for_status().json()
             assert case["quote"]["monthly_paise"] == 261900
+            previous = {"revision": case["revision"], "quote_id": case["quote"]["id"]}
+            case = owner.put("/api/case", json={"revision": case["revision"], "needs": {**needs, "monthly_budget": 3000},
+                                                "failover": True}).raise_for_status().json()
+            assert case["blocker"] == "over_budget"
+            assert owner.post("/api/case/accept", json=previous).status_code == 409
+            outcomes["budget_and_stale_revision_blocked"] = True
             case = owner.put("/api/case", json={"revision": case["revision"], "needs": needs,
                                                 "failover": True}).raise_for_status().json()
             assert case["quote"]["monthly_paise"] == 311800 and case["quote"]["setup_paise"] == 150000
@@ -115,7 +127,19 @@ def main():
                 evidence = post(owner, f"/api/activation/specimens/K11/{kind}")
                 assert evidence["docs"][kind]["status"] == "pass", evidence["docs"][kind]
                 outcomes[kind] = evidence["docs"][kind]
-            flow = post(owner, "/api/activation/order")
+            with demo_client(args.base, 30) as contender, ThreadPoolExecutor(max_workers=2) as workers:
+                contender.cookies.update(owner.cookies)
+                start = Barrier(2, timeout=5)
+
+                def place_together(client):
+                    start.wait()
+                    return post(client, "/api/activation/order")
+
+                first = workers.submit(place_together, owner)
+                second = workers.submit(place_together, contender)
+                flow = first.result()
+                assert second.result()["order"]["id"] == flow["order"]["id"]
+                outcomes["concurrent_checkout_same_order"] = True
         assert post(owner, "/api/activation/order")["order"]["id"] == flow["order"]["id"]
         for _ in range(22):
             status = owner.get("/api/activation").raise_for_status().json()["order"]

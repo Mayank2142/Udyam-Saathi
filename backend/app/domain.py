@@ -14,7 +14,7 @@ class BusinessNeeds(BaseModel):
     city_tier: Literal[1, 2]
     employees: int = Field(ge=1, le=250)
     sites: int = Field(ge=1, le=25)
-    speed: Literal[100, 300]
+    speed: Literal[100, 200, 300]
     email_seats: int = Field(ge=0, le=250)
     devices: int = Field(ge=0, le=1000)
     monthly_budget: int = Field(ge=0, le=1_000_000)
@@ -97,7 +97,7 @@ def build_case(catalogue: Catalogue, config: Configure, previous: Case | None) -
     }
     if needs.sites > 1:
         return Case(**{**fields, "blocker": "multiple_sites"})
-    if needs.coverage == "wireless" and needs.speed == 300:
+    if needs.coverage == "wireless" and needs.speed > 100:
         return Case(**{**fields, "blocker": "unsupported_speed"})
 
     def eligible(sku: str) -> bool:

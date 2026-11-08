@@ -1,0 +1,10 @@
+services:
+  app:
+    ports: !reset []
+    environment:
+      SAATHI_RECOVERY_PROBE: "1"
+      PYTHONPATH: /app/backend
+    volumes:
+      - ./tests:/probe-tests:ro
+  identity:
+    ports: !reset []

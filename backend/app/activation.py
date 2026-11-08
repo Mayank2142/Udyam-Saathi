@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .auth import identity, require_role
 from .domain import Case
 from .store import PostgresStore
-from .verification import check_document, corrected_bill, extract, norm, specimen_image, specimens
+from .verification import GST_NAME_CHECK_VERSION, check_document, corrected_bill, extract, norm, specimen_image, specimens
 
 router = APIRouter(prefix="/api/activation")
 Document = Literal["address", "signatory", "gst", "udyam"]
@@ -45,6 +45,10 @@ def transaction(store: PostgresStore, key: str, operation):
             (key, case.quote.id),
         ).fetchone()
         state = saved[0] if saved else {"docs": {}, "pending": {}}
+        gst = state["docs"].get("gst")
+        if (not state.get("order") and gst and gst["status"] == "pass"
+                and gst.get("check_version") != GST_NAME_CHECK_VERSION):
+            state["docs"]["gst"] = {**gst, "status": "action", "reason": "recapture"}
         result = operation(conn, case, state)
         conn.execute(
             "INSERT INTO activation_cases (owner_key, quote_id, payload) VALUES (%s,%s,%s) "
@@ -128,7 +132,7 @@ def process_document(request, key, kind, data, expected_quote_id, replacement=Fa
     if not replacement and (not file_path or file_path.stem.split("_", 1)[1] != DOC_FILES[kind]):
         raise HTTPException(422, detail="supplied_specimens_only")
     try:
-        image = specimen_image(data, clean_registry_watermark=kind in {"gst", "udyam"})
+        image = specimen_image(data, kind=kind)
     except ValueError as error:
         raise HTTPException(422, detail="invalid_specimen") from error
     job = str(uuid4())

@@ -26,8 +26,8 @@ def read_image(raw):
         target.write_bytes(raw)
         with lock:
             result = list(engine().predict(str(target)))[0].json["res"]
-        return [{"text": text, "confidence": float(score)}
-                for text, score in zip(result["rec_texts"], result["rec_scores"])]
+        return [{"text": text, "confidence": float(score), "box": [int(value) for value in box]}
+                for text, score, box in zip(result["rec_texts"], result["rec_scores"], result["rec_boxes"], strict=True)]
 
 
 @app.post("/extract")

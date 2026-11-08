@@ -28,8 +28,10 @@ class Product:
     def from_csv(cls, row: dict[str, str]) -> Product:
         if row["requires_gstin"] not in {"Y", "N"}:
             raise ValueError("Invalid GST rule")
+        # The supplied case catalogue has one known typo in the failover ID.
+        sku = "P09" if row["product_id"] == "`P09" else row["product_id"]
         product = cls(
-            row["product_id"], row["product_name"], row["unit"],
+            sku, row["product_name"], row["unit"],
             int(row["price_min_inr_per_month"]), int(row["price_max_inr_per_month"]),
             int(row["one_time_setup_inr"]), int(row["min_contract_months"]),
             frozenset(int(tier) for tier in row["available_city_tiers"].split(";")),

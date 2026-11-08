@@ -5,7 +5,7 @@ export interface Needs {
   employees: number;
   sites: number;
   city_tier: 1 | 2;
-  speed: 100 | 300;
+  speed: 100 | 200 | 300;
   email_seats: number;
   devices: number;
   monthly_budget: number;

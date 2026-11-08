@@ -19,6 +19,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, UnidentifiedI
 CLOCK = date(2026, 7, 15)
 BUCKET = "synthetic-kyc"
 GST = re.compile(r"\b\d{2}[A-Z]{3}X[A-Z]\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b")
+GST_NAME_CHECK_VERSION = 1
 UDYAM = re.compile(r"\bUDYAM-[A-Z]{2}-00-\d{7}\b")
 SIGNATORY = re.compile(r"\bSYN-ID-\d{6}\b")
 ISO_DATE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
@@ -37,13 +38,13 @@ def specimens(directory: Path):
     return result
 
 
-def specimen_image(data: bytes, *, clean_registry_watermark=False):
+def specimen_image(data: bytes, *, kind: str):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(io.BytesIO(data), formats=["PNG", "JPEG"]) as source:
                 image = ImageOps.exif_transpose(source).convert("RGB")
-                if clean_registry_watermark:
+                if kind == "udyam":
                     # The supplied certificates overlay pale red type on dark fields.
                     # Remove those colored pixels from the OCR copy only.
                     red, green, _ = image.split()
@@ -52,6 +53,10 @@ def specimen_image(data: bytes, *, clean_registry_watermark=False):
                     mask = ImageChops.multiply(red_tint, pale)
                     image = Image.composite(Image.new("RGB", image.size, "white"), image, mask)
                 image.thumbnail((1500, 1700))
+                if kind == "gst":
+                    # Preserve dark GST text while suppressing the pale red watermark.
+                    # The source specimen is untouched.
+                    image = image.getchannel("R").point(lambda value: 0 if value < 128 else 255).convert("RGB")
                 buffer = io.BytesIO()
                 image.save(buffer, format="PNG")
                 return buffer.getvalue()
@@ -132,6 +137,46 @@ def gst_checksum(value: str):
     return digits[-subtotal % 36] == value[-1]
 
 
+def gst_printed_names(lines, number):
+    # The supplied certificates place labels on the left and values on the right.
+    located = [(line["text"], line["box"]) for line in lines if len(line.get("box", ())) == 4]
+    identifiers = [box for text, box in located if text.strip().upper() == number]
+    labels = [box for text, box in located if norm(text) == "gstin"]
+    if len(identifiers) != 1 or len(labels) != 1:
+        return None
+
+    def center_y(box):
+        return (box[1] + box[3]) / 2
+
+    def center_x(box):
+        return (box[0] + box[2]) / 2
+
+    label, identifier = labels[0], identifiers[0]
+    gap = identifier[0] - label[0]
+    if gap <= 0 or center_x(identifier) <= center_x(label):
+        return None
+    column = label[0] + gap / 2
+    slope = (center_y(identifier) - center_y(label)) / (center_x(identifier) - center_x(label))
+
+    def row_y(box):
+        return center_y(box) - slope * center_x(box)
+
+    names = []
+    for field in ("legal", "trade"):
+        anchors = [box for text, box in located if box[0] < column and norm(text) in (field, field + "name")]
+        if len(anchors) != 1:
+            return None
+        anchor = anchors[0]
+        tolerance = (anchor[3] - anchor[1]) * 0.55
+        parts = sorted((box[0], text) for text, box in located
+                       if box[0] >= column and abs(row_y(box) - row_y(anchor)) <= tolerance)
+        name = norm(" ".join(text for _, text in parts))
+        if not name:
+            return None
+        names.append(name)
+    return tuple(names)
+
+
 def check_document(kind: str, lines: list[dict], business: str, directory: Path):
     checked = [row for row in lines if row.get("confidence", 0) >= .75]
     text = " ".join(row["text"] for row in checked)
@@ -155,8 +200,17 @@ def check_document(kind: str, lines: list[dict], business: str, directory: Path)
             return {**result, "reason": "registry_missing"}
         if kind == "gst" and row["status"].casefold() != "active":
             return {**result, "reason": "gst_inactive"}
-        names = (row["trade_name"], row["legal_name"]) if kind == "gst" else (row["enterprise_name"],)
-        if label not in {norm(name) for name in names} or label not in norm(text):
+        if kind == "gst":
+            names = tuple(norm(row[field]) for field in ("legal_name", "trade_name"))
+            printed = gst_printed_names(checked, number)
+            if not printed:
+                return result
+            if printed != names:
+                return {**result, "reason": "gst_name_mismatch"}
+            if label not in names:
+                return {**result, "reason": "business_mismatch"}
+            return {**result, "status": "pass", "reason": "mock_match", "check_version": GST_NAME_CHECK_VERSION}
+        if label != norm(row["enterprise_name"]) or label not in norm(text):
             return {**result, "reason": "business_mismatch"}
         return {**result, "status": "pass", "reason": "mock_match"}
 

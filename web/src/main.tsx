@@ -14,6 +14,8 @@ const planNames: Record<Broadband, string> = {
   P01: 'Biz Fibre 100 Mbps', P02: 'Biz Fibre 300 Mbps', P04: 'Biz 5G AirFiber 100 Mbps',
 };
 type Step = 'needs' | 'quote' | 'saved';
+const advisorRequiredFields = ['sites', 'monthly_budget'] as const;
+type AdvisorRequiredField = typeof advisorRequiredFields[number];
 
 function Icon({ name, size = 20 }: { name: 'arrow' | 'check' | 'wifi' | 'shield' | 'receipt' | 'briefcase'; size?: number }) {
   const paths = {
@@ -35,6 +37,11 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
 function money(paise: number, language: string) {
   const locale = { en: 'en-IN', hi: 'hi-IN', mr: 'mr-IN' }[language] ?? 'en-IN';
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(paise / 100);
+}
+
+function showIssue(element: HTMLElement | null) {
+  element?.focus({ preventScroll: true });
+  element?.scrollIntoView({ block: 'start' });
 }
 
 function Summary({ quote, status }: { quote: Quote | null; status: 'draft' | 'saved' }) {
@@ -74,8 +81,12 @@ function App() {
   const [description, setDescription] = useState('');
   const [advisorBusy, setAdvisorBusy] = useState(false);
   const [advisorNotice, setAdvisorNotice] = useState('');
+  const [unconfirmed, setUnconfirmed] = useState<readonly AdvisorRequiredField[]>([]);
   const heading = useRef<HTMLHeadingElement>(null);
+  const issue = useRef<HTMLDivElement>(null);
+  const advisorIssue = useRef<HTMLParagraphElement>(null);
   const moveFocus = useRef(false);
+  const blocker = step === 'quote' ? record?.blocker : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -100,12 +111,18 @@ function App() {
   }, [i18n.language]);
 
   useEffect(() => {
-    if (moveFocus.current) {
+    if (error || blocker) {
+      showIssue(issue.current);
+    } else if (moveFocus.current) {
       heading.current?.focus();
       window.scrollTo(0, 0);
-      moveFocus.current = false;
     }
-  }, [step]);
+    moveFocus.current = false;
+  }, [step, error, blocker, record?.revision]);
+
+  useEffect(() => {
+    if (advisorNotice === 'advisor_unavailable') showIssue(advisorIssue.current);
+  }, [advisorNotice]);
 
   function navigate(nextStep: Step) {
     setError('');
@@ -115,6 +132,14 @@ function App() {
 
   function update<K extends keyof Needs>(field: K, value: Needs[K]) {
     setNeeds((current) => ({ ...current, [field]: value }));
+    if (error === 'emailLimit' && (field === 'employees' || field === 'email_seats')) setError('');
+  }
+
+  function enterRequiredValue(field: AdvisorRequiredField, value: string) {
+    setUnconfirmed((current) => value === ''
+      ? [...current.filter((name) => name !== field), field]
+      : current.filter((name) => name !== field));
+    if (value !== '') update(field, Number(value));
   }
 
   async function configure(broadband?: Broadband, failover = false) {
@@ -137,6 +162,7 @@ function App() {
     setAdvisorNotice('');
     try {
       const { fields } = await request<{ fields: Partial<Needs> }>('/advisor', 'POST', { text: description.trim(), language: locale });
+      setUnconfirmed(advisorRequiredFields.filter((field) => fields[field] === undefined));
       if (Object.keys(fields).length) {
         setNeeds((current) => ({ ...current, ...fields }));
         setAdvisorNotice('advisor_review');
@@ -147,7 +173,12 @@ function App() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (needs.email_seats > needs.employees) { setError('emailLimit'); return; }
+    if (busy || advisorBusy || unconfirmed.length > 0) return;
+    if (needs.email_seats > needs.employees) {
+      if (error === 'emailLimit') showIssue(issue.current);
+      setError('emailLimit');
+      return;
+    }
     void configure();
   }
 
@@ -167,6 +198,7 @@ function App() {
 
   const price = (paise: number) => money(paise, i18n.language);
   const quote = record?.quote ?? null;
+  const pageTitle = step === 'needs' ? 'intro' : step === 'saved' ? 'accepted' : blocker && !quote ? 'quoteNeedsReview' : 'quote';
   const progress = [
     { id: 'needs', label: 'stepNeeds' }, { id: 'quote', label: 'stepQuote' }, { id: 'saved', label: 'stepSave' },
   ];
@@ -175,10 +207,12 @@ function App() {
   const expired = error === 'quote_expired' || (quote && Date.parse(quote.expires_at) <= Date.now());
 
   return <>
+    <a className="skip-link" href="#workspace">Skip to workspace</a>
     <header className="topbar"><div className="shell topbar-inner">
       <div className="brand"><span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
         <div><strong>Udyam Saathi</strong><small>{t('journey')}</small></div>
       </div>
+      <nav className="product-nav" aria-label="Product"><a href="#workspace">{locale === 'en' ? 'Workspace' : locale === 'hi' ? 'कार्यस्थल' : 'कार्यक्षेत्र'}</a>{session?.role !== 'partner' && <a href="#journey">{locale === 'en' ? 'Your journey' : locale === 'hi' ? 'आपकी यात्रा' : 'तुमचा प्रवास'}</a>}</nav>
       <div className="topbar-actions">
         <span className="environment"><i />{t('sandbox')}</span>
         {session?.role ? <form action="/api/auth/logout" method="post"><button className="button secondary auth-link">{s('sign_out')}</button></form>
@@ -190,33 +224,50 @@ function App() {
         </label>
       </div>
     </div></header>
-    <main className="shell main">
+    <main className="shell main" id="workspace">
+      {session?.role !== 'partner' && step === 'needs' && <section className="product-hero">
+        <div className="hero-copy"><span className="eyebrow">AIRTEL SYNC 2026 · TEAM SIGNAL</span>
+          <h2>{locale === 'en' ? <>Big ambitions.<br /><em>One connected business.</em></> : locale === 'hi' ? <>बड़े सपने।<br /><em>एक जुड़ा हुआ व्यवसाय।</em></> : <>मोठी स्वप्ने.<br /><em>एक जोडलेला व्यवसाय.</em></>}</h2>
+          <p>{t('introHelp')}</p><a className="button" href="#builder">{t('buildQuote')}<Icon name="arrow" /></a>
+          <div className="hero-trust"><Icon name="shield" size={16} />{locale === 'en' ? 'Your needs. Transparent pricing. A guided journey.' : t('preview3')}</div>
+        </div>
+        <div className="network-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="orbit orbit-three" />
+          <svg className="network-lines" viewBox="0 0 440 320"><path d="M220 160 85 70M220 160 360 90M220 160 90 250M220 160 350 260" /></svg>
+          <div className="network-core"><Icon name="wifi" size={45} /><strong>saathi</strong><span>CONNECTED BUSINESS</span></div>
+          <div className="network-node node-fibre"><Icon name="wifi" /><span>Business fibre</span></div><div className="network-node node-security"><Icon name="shield" /><span>Device security</span></div>
+          <div className="network-node node-mail"><Icon name="briefcase" /><span>Business email</span></div><div className="network-node node-backup"><Icon name="check" /><span>Backup ready</span></div>
+        </div>
+      </section>}
       {session?.role === 'partner' ? <PartnerQueue /> : <>
-      <ol className="steps">
+      <ol className="steps" id="journey">
         {progress.map(({ id, label }, index) => <li key={id} aria-current={step === id ? 'step' : undefined}
           className={index <= currentIndex ? 'reached' : ''}>
           <span className="step-number">{index < currentIndex ? <Icon name="check" size={15} /> : index + 1}</span>{t(label)}
         </li>)}
       </ol>
-      <div className="page-heading">
-        <h1 tabIndex={-1} ref={heading}>{t(step === 'needs' ? 'intro' : step === 'quote' ? 'quote' : 'accepted')}</h1>
-        <p>{t(step === 'needs' ? 'introHelp' : step === 'quote' ? 'quoteHelp' : 'acceptedHelp')}</p>
+      <div className="page-heading" id="builder">
+        <span className="eyebrow">{locale === 'en' ? 'YOUR BUSINESS, BETTER CONNECTED' : t('journey')}</span>
+        <h1 tabIndex={-1} ref={heading}>{t(pageTitle)}</h1>
+        <p>{t(`${pageTitle}Help`)}</p>
       </div>
       {loading && <p role="status">{t('loading')}</p>}
-      {error && <div className="alert" role="alert">{error === 'order_already_placed' ? s(error) : t(error, { defaultValue: t('error') })}
+      {error && <div id="quote-error" className="alert" role="alert" tabIndex={-1} ref={issue}>{error === 'order_already_placed' ? s(error) : t(error, { defaultValue: t('error') })}
         {errorNeedsReload && <button type="button" className="text-button" onClick={() => location.reload()}>{t('reload')}</button>}
       </div>}
       {!loading && !loadFailed && <div className="layout">
         <div className="primary">
           {step === 'needs' && <>
             <section className="panel advisor-panel">
+              <div className="advisor-heading"><span className="panel-icon"><Icon name="wifi" /></span><span className="eyebrow">SAATHI AI</span><span className="tag">{locale === 'en' ? 'You stay in control' : t('stepNeeds')}</span></div>
               <label className="field"><span>{s('advisor_title')}</span>
                 <textarea rows={2} maxLength={450} value={description} placeholder={s('advisor_example')}
                   onChange={(event) => setDescription(event.target.value)} />
               </label>
               <button className="button secondary" type="button" disabled={description.trim().length < 4 || advisorBusy}
                 onClick={() => void suggest()}>{s(advisorBusy ? 'working' : 'advisor_button')}</button>
-              {advisorNotice && <p className="requirements" role="status">{s(advisorNotice)}</p>}
+              {advisorNotice && (advisorNotice === 'advisor_unavailable'
+                ? <p className="alert" role="alert" tabIndex={-1} ref={advisorIssue}>{s(advisorNotice)}</p>
+                : <p className="requirements" role="status">{s(advisorNotice)}</p>)}
             </section>
           <form onSubmit={submit}>
             <section className="panel">
@@ -231,7 +282,10 @@ function App() {
                   <option value="1">{t('tier1')}</option><option value="2">{t('tier2')}</option>
                 </select></Field>
                 <Field label={t('employees')}><input type="number" required min={1} max={250} value={needs.employees} onChange={(e) => update('employees', Number(e.target.value))} /></Field>
-                <Field label={t('sites')}><input type="number" required min={1} max={25} value={needs.sites} onChange={(e) => update('sites', Number(e.target.value))} /></Field>
+                <Field label={t('sites')} hint={unconfirmed.includes('sites') ? s('confirm_before_continuing') : undefined}>
+                  <input type="number" required min={1} max={25} value={unconfirmed.includes('sites') ? '' : needs.sites}
+                    onChange={(e) => enterRequiredValue('sites', e.target.value)} />
+                </Field>
               </div>
             </section>
             <section className="panel">
@@ -239,21 +293,27 @@ function App() {
                 <h2>{t('services')}</h2><p>{t('servicesHelp')}</p>
               </div></div>
               <div className="fields">
-                <Field label={t('speed')}><select value={needs.speed} onChange={(e) => update('speed', Number(e.target.value) as 100 | 300)}>
-                  <option value="100">100 Mbps</option><option value="300">300 Mbps</option>
+                <Field label={t('speed')} hint={t('speedHelp')}><select value={needs.speed} onChange={(e) => update('speed', Number(e.target.value) as Needs['speed'])}>
+                  <option value="100">100 Mbps</option><option value="200">200 Mbps</option><option value="300">300 Mbps</option>
                 </select></Field>
                 <Field label={t('coverage')}><select value={needs.coverage} onChange={(e) => update('coverage', e.target.value as Needs['coverage'])}>
                   <option value="fibre">{t('fibre')}</option><option value="wireless">{t('wireless')}</option><option value="unknown">{t('unknown')}</option>
                 </select></Field>
-                <Field label={t('emailSeats')}><input type="number" required min={0} max={250} value={needs.email_seats} onChange={(e) => update('email_seats', Number(e.target.value))} /></Field>
+                <Field label={t('emailSeats')}><input type="number" required min={0} max={250} value={needs.email_seats}
+                  aria-invalid={error === 'emailLimit' || undefined} aria-describedby={error === 'emailLimit' ? 'quote-error' : undefined}
+                  onChange={(e) => update('email_seats', Number(e.target.value))} /></Field>
                 <Field label={t('devices')}><input type="number" required min={0} max={1000} value={needs.devices} onChange={(e) => update('devices', Number(e.target.value))} /></Field>
-                <Field label={t('budget')} hint={t('budgetHelp')}><input type="number" required min={0} max={1000000} value={needs.monthly_budget} onChange={(e) => update('monthly_budget', Number(e.target.value))} /></Field>
+                <Field label={t('budget')} hint={unconfirmed.includes('monthly_budget')
+                  ? s('confirm_budget_before_continuing') : t('budgetHelp')}>
+                  <input type="number" required min={0} max={1000000} value={unconfirmed.includes('monthly_budget') ? '' : needs.monthly_budget}
+                    onChange={(e) => enterRequiredValue('monthly_budget', e.target.value)} />
+                </Field>
               </div>
             </section>
             <div className="actions"><button className="button" disabled={busy || advisorBusy} type="submit">{t(busy ? 'working' : 'buildQuote')}<Icon name="arrow" size={18} /></button></div>
           </form></>}
           {step !== 'needs' && record && <>
-            {record.blocker && <div className="alert" role="status"><strong>{t('attention')}</strong><p>{t(record.blocker)}</p></div>}
+            {blocker && <div className="alert" role="alert" tabIndex={-1} ref={error ? undefined : issue}><strong>{t('attention')}</strong><p>{t(blocker)}</p></div>}
             {quote && <section className="panel quote-panel">
               <div className="quote-top"><h2>{t('items')}</h2><span className="case-ref">{t('case', { id: record.id.slice(0, 8).toUpperCase() })}</span></div>
               <div className="coverage-strip"><Icon name="wifi" /><div><strong>{t('coverageLabel')}</strong><span>{t(record.needs.coverage)}</span></div><span className="tag">{t('simulated')}</span></div>
